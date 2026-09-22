@@ -328,6 +328,27 @@ def main():
     def budget_left():
         return time.monotonic() - t0 < RUN_BUDGET_SECONDS
 
+    # checkpoint גם באמצע חודש (לא רק כשהוא מסתיים) - חודש יכול לקחת כמה
+    # דקות (15-40+ דוחות), וריצה שנעצרת/מבוטלת באמצע חודש בלי checkpoint
+    # כזה מאבדת את כל מה שהורד בו (נראה בפועל: run #6 בוטל אחרי דקה, בלי
+    # אף commit, כי עוד לא סיים אף חודש שלם).
+    CHECKPOINT_EVERY_REPORTS = 5
+    CHECKPOINT_EVERY_SECONDS = 45
+    last_checkpoint_t = time.monotonic()
+    reports_since_checkpoint = 0
+
+    def checkpoint(force=False):
+        nonlocal last_checkpoint_t, reports_since_checkpoint
+        if not force and reports_since_checkpoint < CHECKPOINT_EVERY_REPORTS \
+                and time.monotonic() - last_checkpoint_t < CHECKPOINT_EVERY_SECONDS:
+            return
+        save_json(FETCHED_IDS_PATH, sorted(fetched_ids))
+        save_json(SCANNED_MONTHS_PATH, sorted(scanned_months))
+        save_json(CANONICAL_PATH, canonical)
+        git_commit_push(f"k203: checkpoint ({len(fetched_ids)} total reports)")
+        last_checkpoint_t = time.monotonic()
+        reports_since_checkpoint = 0
+
     blocked = False
     for ym in pending_months:
         if not budget_left():
@@ -380,6 +401,7 @@ def main():
                 })
                 fetched_ids.add(rid)
                 stats["reports_fetched"] += 1
+                reports_since_checkpoint += 1
 
                 key = f"{company}|{period_ym}"
                 entry = canonical.setdefault(key, {"canonical_id": rid, "all_ids": []})
@@ -391,6 +413,7 @@ def main():
                     if len(entry["all_ids"]) > 1 else ""
                 log(f"  ✓ {rid} ({company}, תקופה {period_ym}): {len(rows)} שורות "
                     f"-> {os.path.relpath(out_path, REPO_ROOT)}{dup_note}")
+                checkpoint()
             except Blocked as e:
                 log(f"  {e} - עוצר את כל הריצה")
                 blocked = True
@@ -404,20 +427,14 @@ def main():
         if month_done:
             scanned_months.add(ym)
             stats["months_scanned"] += 1
-            save_json(FETCHED_IDS_PATH, sorted(fetched_ids))
-            save_json(SCANNED_MONTHS_PATH, sorted(scanned_months))
-            save_json(CANONICAL_PATH, canonical)
-            git_commit_push(f"k203: {ym} ({len(reports)} reports)")
+            checkpoint(force=True)
         else:
             log(f"  חודש {ym} לא הושלם (תקציב זמן/חסימה) - יושלם בריצה הבאה")
             break
         if blocked:
             break
 
-    save_json(FETCHED_IDS_PATH, sorted(fetched_ids))
-    save_json(SCANNED_MONTHS_PATH, sorted(scanned_months))
-    save_json(CANONICAL_PATH, canonical)
-    git_commit_push("k203: final save (partial month / end of run)")
+    checkpoint(force=True)
     multi = {k: v for k, v in canonical.items() if len(v["all_ids"]) > 1}
     if multi:
         log(f"\n⚠ {len(multi)} צירופי חברה+תקופה עם יותר מדוח אחד (מקורי+תיקון/ים) - "
