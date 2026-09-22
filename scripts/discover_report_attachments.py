@@ -76,9 +76,24 @@ def main():
         sys.exit(1)
     session = requests.Session()
 
-    log("שלב 1: משיכת רשימת דוחות ללא סינון freeText (הכל, בטווח 60 יום)...")
-    all_reports = fetch_recent_reports(session, n=100, free_text="")
-    log(f"נמצאו {len(all_reports)} דוחות בדגימה הלא-מסוננת")
+    candidates = ["דוח", "מבנה נכסים", "פירוט נכסים", "רשימת נכסים",
+                  "נכסי הקרן", "ק203", "203"]
+    all_reports = []
+    seen_ids = set()
+    for q in candidates:
+        log(f"שלב 1: משיכת רשימת דוחות עם freeText={q!r}...")
+        try:
+            reps = fetch_recent_reports(session, n=30, free_text=q)
+        except Exception as e:
+            log(f"  שגיאה עבור {q!r}: {e}")
+            continue
+        log(f"  {len(reps)} תוצאות")
+        for rep in reps:
+            if rep.get("id") not in seen_ids:
+                seen_ids.add(rep.get("id"))
+                all_reports.append(rep)
+        time.sleep(0.3)
+    log(f"\nסה\"כ דוחות ייחודיים שנאספו מכל השאילתות: {len(all_reports)}")
     titles = {}
     for rep in all_reports:
         t = (rep.get("title") or "").split("-")[0].strip()
