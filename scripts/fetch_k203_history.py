@@ -38,6 +38,11 @@ except ImportError:
 BASE = "https://maya.tase.co.il"
 FILES_BASE = "https://mayafiles.tase.co.il/"
 LIST_URL = BASE + "/api/v1/reports/mutual-funds"
+ETF_LIST_URL = BASE + "/api/v1/reports/etfs"
+# שני endpoints נפרדים במאיה (רשימות "דוחות" שונות לקרנות סל מול קרנות
+# נאמנות - לבקשת המשתמש, לא לסמוך על כך ש-mutual-funds מכסה הכל תמיד;
+# נבדק פעם אחת (discover_etf_vs_mutual.py) שבחודש לדוגמה etfs היה תת-קבוצה
+# מלאה, אבל זו לא הוכחה לכל טווח ההיסטוריה - שואבים משניהם ומאחדים).
 META_URL = BASE + "/api/v1/reports/{id}"
 
 HEADERS = {
@@ -166,15 +171,15 @@ def _get_with_retries(session, url, timeout=60, what="request"):
     return _request_with_retries(lambda: session.get(url, headers=hdrs, timeout=timeout), what)
 
 
-def list_month_reports(session, ym):
-    """כל דוחות ק203 ('דוח חודשי') בחודש נתון, עם דפדוף מלא."""
+def _list_from_endpoint(session, list_url, ym, label):
+    """כל דוחות ק203 ('דוח חודשי') בחודש נתון מ-endpoint אחד, עם דפדוף מלא."""
     frm, to = month_bounds(ym)
     out, seen, page = [], set(), 1
     while True:
         body = {"pageNumber": page, "fromDate": frm, "toDate": to,
                 "noMeetings": False, "isSingle": False, "isIntendToTaseMember": False,
                 "by": "company", "freeText": "דוח חודשי", "limit": 30, "offset": (page - 1) * 30}
-        r = _post_with_retries(session, LIST_URL, body, what=f"רשימה {ym} עמוד {page}")
+        r = _post_with_retries(session, list_url, body, what=f"רשימה {ym} ({label}) עמוד {page}")
         data = r.json() or []
         if not data:
             break
@@ -196,6 +201,17 @@ def list_month_reports(session, ym):
         page += 1
         time.sleep(SLEEP_BETWEEN_CALLS)
     return out
+
+
+def list_month_reports(session, ym):
+    """כל דוחות ק203 בחודש נתון, משני ה-endpoints (mutual-funds + etfs) -
+    רשימות נפרדות במאיה לקרנות סל מול קרנות נאמנות; מאחדים לפי report id."""
+    by_id = {}
+    for list_url, label in ((LIST_URL, "mutual-funds"), (ETF_LIST_URL, "etfs")):
+        for rep in _list_from_endpoint(session, list_url, ym, label):
+            by_id.setdefault(rep["id"], rep)  # הראשון שמגיע קובע (companies זהה בד"כ)
+        time.sleep(SLEEP_BETWEEN_CALLS)
+    return list(by_id.values())
 
 
 def fetch_meta(session, report_id):
