@@ -70,6 +70,14 @@ def fetch_meta(session, report_id):
     return r.json()
 
 
+def fetch_txt1(session, report_id, url_path):
+    hdrs = {k: v for k, v in HEADERS.items() if k != "content-type"}
+    full_url = "https://mayafiles.tase.co.il/" + url_path.lstrip("/")
+    r = session.get(full_url, headers=hdrs, timeout=60)
+    r.raise_for_status()
+    return r.content
+
+
 def main():
     if requests is None:
         log("שגיאה: requests לא מותקן")
@@ -133,6 +141,25 @@ def main():
         time.sleep(0.3)
 
     print(json.dumps(out, ensure_ascii=False, indent=2))
+
+    # שלב 3: השערה - TXT1 של ק203 (דוח חודשי) הוא בעצם הקובץ המפורט המלא
+    # (28 עמודות, שורה לכל נייר), ו-exposure.py רק מסנן/שומר 4 מהעמודות
+    # ו-7 קודים. בודקים את זה ישירות מול הכותרת שקיבלנו מהמשתמש.
+    k203 = next((s for s in out["samples"] if s.get("formId") == "ק203"), None)
+    if k203 and k203["attachments"]:
+        att = k203["attachments"][0]
+        log(f"\nשלב 3: הורדת TXT1 בפועל לדוח {k203['report_id']} ({att['url']})...")
+        try:
+            content = fetch_txt1(session, k203["report_id"], att["url"])
+            text = content.decode("utf-8-sig", errors="replace")
+            lines = text.splitlines()
+            log(f"  {len(lines)} שורות, {len(content)} bytes")
+            log(f"  כותרת: {lines[0] if lines else '(ריק)'}")
+            log(f"  שורה 2: {lines[1] if len(lines) > 1 else '(אין)'}")
+            header_cols = lines[0].split(",") if lines else []
+            log(f"  מספר עמודות בכותרת: {len(header_cols)}")
+        except Exception as e:
+            log(f"  שגיאה: {e}")
 
 
 if __name__ == "__main__":
