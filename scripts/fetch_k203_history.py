@@ -212,9 +212,16 @@ def month_windows(start, end):
 
 
 def month_bounds(ym):
+    """מחזיר (fromDate, toDate) בפורמט שמאיה מצפה לו. לחודש הנוכחי, ה'סוף'
+    התיאורטי (1 לחודש הבא) הוא תאריך עתידי - מאיה מחזירה 400 Bad Request
+    על טווח כזה (נראה בפועל: חודש 2026-09 נכשל, כי 1/10/2026 עתידי ביחס
+    ל-22/9/2026). מגבילים את to ל-מחר לכל היותר."""
     y, m = (int(x) for x in ym.split("-"))
     frm = date(y, m, 1)
     to = date(y + 1, 1, 1) if m == 12 else date(y, m + 1, 1)
+    tomorrow = datetime.now(timezone.utc).date() + timedelta(days=1)
+    if to > tomorrow:
+        to = tomorrow
     z_frm, z_to = "T00:00:00.000Z", "T00:00:00.000Z"
     return frm.isoformat() + z_frm, to.isoformat() + z_to
 
