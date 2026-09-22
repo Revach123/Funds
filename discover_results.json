@@ -1,0 +1,216 @@
+{
+  "unfiltered_reports_found": 96,
+  "titles": {
+    "דוח שנתי של קרן ליום": 14,
+    "מדיניות השקעה/תמהיל נכסים שינוי בתוקף מיום 1.10.26": 9,
+    "דוח כספי של הקרן ליום 30.6.26": 33,
+    "אי הצעת יח'": 2,
+    "ארוע בקרן": 1,
+    "מינוי דירקטור חיצוני חבר ועדת ביקורת": 1,
+    "סיום כהונת דירקטור חיצוני": 1,
+    "דוח חודשי": 30,
+    "דוח כספי של הקרן ליום 31.5.26": 5
+  },
+  "samples": [
+    {
+      "report_id": 1771618,
+      "title": "דוח שנתי של קרן ליום-30/06/2026",
+      "companies": [
+        "הראל"
+      ],
+      "formId": "ק121",
+      "reportType": null,
+      "attachments": [
+        {
+          "reportId": 1771618,
+          "fileType": "htm",
+          "fileName": null,
+          "fileSize": 84,
+          "translated": false,
+          "url": "rhtm/1771001-1772000/H1771618.htm"
+        },
+        {
+          "reportId": 1771618,
+          "fileType": "pdf1",
+          "fileName": "5111133_isa.pdf",
+          "fileSize": 540,
+          "translated": false,
+          "url": "rpdf/1771001-1772000/P1771618-00.pdf"
+        }
+      ]
+    },
+    {
+      "report_id": 1771514,
+      "title": "מדיניות השקעה/תמהיל נכסים שינוי בתוקף מיום 1.10.26",
+      "companies": [
+        "קסם"
+      ],
+      "formId": "ק048",
+      "reportType": null,
+      "attachments": [
+        {
+          "reportId": 1771514,
+          "fileType": "htm",
+          "fileName": null,
+          "fileSize": 47,
+          "translated": false,
+          "url": "rhtm/1771001-1772000/H1771514.htm"
+        }
+      ]
+    },
+    {
+      "report_id": 1771506,
+      "title": "דוח כספי של הקרן ליום 30.6.26",
+      "companies": [
+        "מיטב קרנות נאמנות"
+      ],
+      "formId": "ק210",
+      "reportType": null,
+      "attachments": [
+        {
+          "reportId": 1771506,
+          "fileType": "pdf1",
+          "fileName": "דוח_כספי_5136544_isa.pdf",
+          "fileSize": 729,
+          "translated": false,
+          "url": "rpdf/1771001-1772000/P1771506-00.pdf"
+        }
+      ]
+    },
+    {
+      "report_id": 1771480,
+      "title": "אי הצעת יח'-אי מסחר בנכסים-החל מיום 30.9.26, תחודש ביום 5.10.26",
+      "companies": [
+        "איביאי קרנות נאמנות "
+      ],
+      "formId": "ק088",
+      "reportType": null,
+      "attachments": [
+        {
+          "reportId": 1771480,
+          "fileType": "htm",
+          "fileName": null,
+          "fileSize": 37,
+          "translated": false,
+          "url": "rhtm/1771001-1772000/H1771480.htm"
+        }
+      ]
+    },
+    {
+      "report_id": 1771449,
+      "title": "ארוע בקרן-הארכת התקופה לקיום קרן",
+      "companies": [
+        "איילון"
+      ],
+      "formId": "ק123",
+      "reportType": null,
+      "attachments": [
+        {
+          "reportId": 1771449,
+          "fileType": "htm",
+          "fileName": null,
+          "fileSize": 39,
+          "translated": false,
+          "url": "rhtm/1771001-1772000/H1771449.htm"
+        }
+      ]
+    },
+    {
+      "report_id": 1771448,
+      "title": "מינוי דירקטור חיצוני חבר ועדת ביקורת-אופיר איל",
+      "companies": [
+        "אלטשולר-שחם קרנות"
+      ],
+      "formId": "ק030",
+      "reportType": null,
+      "attachments": [
+        {
+          "reportId": 1771448,
+          "fileType": "htm",
+          "fileName": null,
+          "fileSize": 71,
+          "translated": false,
+          "url": "rhtm/1771001-1772000/H1771448.htm"
+        }
+      ]
+    },
+    {
+      "report_id": 1771446,
+      "title": "סיום כהונת דירקטור חיצוני",
+      "companies": [
+        "אלטשולר-שחם קרנות"
+      ],
+      "formId": "ק031",
+      "reportType": null,
+      "attachments": [
+        {
+          "reportId": 1771446,
+          "fileType": "htm",
+          "fileName": null,
+          "fileSize": 60,
+          "translated": false,
+          "url": "rhtm/1771001-1772000/H1771446.htm"
+        }
+      ]
+    },
+    {
+      "report_id": 1757060,
+      "title": "דוח חודשי-יוני 2026",
+      "companies": [
+        "אנליסט"
+      ],
+      "formId": "ק203",
+      "reportType": null,
+      "attachments": [
+        {
+          "reportId": 1757060,
+          "fileType": "txt1",
+          "fileName": "ANAL0626.txt",
+          "fileSize": 4161,
+          "translated": false,
+          "url": "rtxt/1757001-1758000/T1757060-00.txt"
+        }
+      ]
+    },
+    {
+      "report_id": 1766651,
+      "title": "דוח כספי של הקרן ליום 31.5.26",
+      "companies": [
+        "איילון"
+      ],
+      "formId": "ק210",
+      "reportType": null,
+      "attachments": [
+        {
+          "reportId": 1766651,
+          "fileType": "pdf1",
+          "fileName": "אביב_אגח_חברות_ESG_כשרה_-_דוח_כספי_-_05-2026_isa.pdf",
+          "fileSize": 801,
+          "translated": false,
+          "url": "rpdf/1766001-1767000/P1766651-00.pdf"
+        }
+      ]
+    }
+  ],
+  "debug_form_ids": [
+    "'ק121'",
+    "'ק048'",
+    "'ק210'",
+    "'ק088'",
+    "'ק123'",
+    "'ק030'",
+    "'ק031'",
+    "'ק203'",
+    "'ק210'"
+  ],
+  "k203_step3": {
+    "found_k203_sample": true,
+    "report_id": 1757060,
+    "url": "rtxt/1757001-1758000/T1757060-00.txt",
+    "num_lines": 12213,
+    "num_bytes": 4261032,
+    "header_line": "מספר קרן\tשם קרן\tשם נכס\tסוג נכס\tמספר מזהה\tסוג מזהה\tכמות\tשווי בשקלים\tמחיר\tשווי במטבע מסחר\tחשיפה‎ ‎%\tכמות שהושאלה\tסוג מחיר\tמקום מסחר\tשוק מסחר\tמטבע\tשער המטבע\tכמות אגח לפדיון\tריבית שנצברה\tTICKER\tלפי מדיניות\tדרגת אגח\tקוד מדרגת\tקוד בנק\tתאריך דוח\tמס.רשומה\tסהכ רשומות\tמס.מנהל ברשם                                                  ",
+    "row2": "5119607 \tאנליסט מדינה ללא מניות   \t שכון ובי אגח  8                        \t10 \t1135888       \t1  \t105468.75       \t130095.7        \t123.35          \t130095.7        \t0.06    \t0                \t1 \t0 \t1 \t1 \t1           \t0.000000        \t0           \t                      \t0\tA    \t1\t20\t30062026\t1\t12212 \t511146490   ",
+    "num_header_cols": 1
+  }
+}
