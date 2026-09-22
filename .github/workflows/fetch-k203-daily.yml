@@ -1,0 +1,58 @@
+name: fetch-k203-daily
+on:
+  schedule:
+    # פעם ביום - תחזוקה שוטפת אחרי שההיסטוריה המלאה מכוסה (ר' fetch-k203-history.yml
+    # לריצת ה-backfill החד-פעמית). סורק מחדש את 3 החודשים האחרונים תמיד
+    # (DAILY_RECENT_MONTHS) כדי לתפוס גם דוחות חדשים של החודש הנוכחי וגם
+    # תיקונים מאוחרים לחודשים קודמים - מדלג על מה שכבר קיים (fetched_ids).
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      recent_months:
+        description: "How many recent months to always re-scan"
+        required: false
+        default: "3"
+      budget_seconds:
+        description: "Max seconds to spend (daily runs are incremental - should finish fast)"
+        required: false
+        default: "1800"
+permissions:
+  contents: write
+concurrency:
+  group: fetch-k203-daily
+  cancel-in-progress: false
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+      - name: Fetch new/corrected ק203 reports (last N months)
+        env:
+          DAILY_RECENT_MONTHS: ${{ inputs.recent_months || '3' }}
+          RUN_BUDGET_SECONDS: ${{ inputs.budget_seconds || '1800' }}
+        run: python scripts/fetch_k203_history.py
+      - name: Final safety-net commit
+        run: |
+          git add state
+          [ -d reports ] && git add reports || true
+          git diff --staged --quiet && echo "no changes" && exit 0
+          git commit -m "k203-daily: safety-net commit $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          for i in 1 2 3 4 5; do
+            if git push; then
+              echo "push succeeded on attempt $i"
+              exit 0
+            fi
+            echo "push rejected - rebasing and retrying ($i)"
+            git pull --rebase origin main
+          done
+          echo "push failed after 5 attempts"
+          exit 1

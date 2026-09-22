@@ -35,6 +35,12 @@ period הוא התקופה שהדוח מדווח עליה (מנותח מהכות
 
 תקציב זמן לריצה: עוצר לאחר RUN_BUDGET_SECONDS (משאיר מרווח ל-commit/push
 לפני timeout של ה-job) - להריץ שוב (ידנית או בקרון) עד שההיסטוריה מכוסה.
+
+מצב יומי (DAILY_RECENT_MONTHS=N, ר' .github/workflows/fetch-k203-daily.yml):
+לתחזוקה שוטפת אחרי שההיסטוריה מכוסה - סורק תמיד מחדש את N החודשים
+האחרונים בלי תלות ב-scanned_months (כדי לתפוס דוחות חדשים של החודש הנוכחי
++ תיקונים מאוחרים לחודשים קודמים), אבל עדיין מדלג על report_id שכבר יש
+ב-fetched_ids - כך שריצה יומית מהירה גם אם רוב הדוחות כבר קיימים.
 """
 import json
 import os
@@ -316,9 +322,21 @@ def main():
 
     today = datetime.now(timezone.utc).date()
     all_months = month_windows(HISTORY_START, today)
-    pending_months = [m for m in all_months if m not in scanned_months]
-    log(f"סה\"כ {len(all_months)} חודשים בטווח ({HISTORY_START} עד {today}), "
-        f"{len(pending_months)} עדיין לא נסרקו")
+
+    daily_recent = int(os.environ.get("DAILY_RECENT_MONTHS") or 0)
+    if daily_recent > 0:
+        # מצב יומי: תמיד סורקים מחדש את N החודשים האחרונים (לא לפי
+        # scanned_months) - כדי לתפוס גם דוחות חדשים לגמרי (החודש הנוכחי
+        # עדיין "פתוח") וגם תיקונים מאוחרים לתקופות שכבר "הושלמו". fetched_ids
+        # עדיין מונע הורדה חוזרת של דוח שכבר יש לנו - רק חדשים/מתוקנים
+        # מתווספים בפועל.
+        pending_months = all_months[-daily_recent:]
+        log(f"מצב יומי: סורק מחדש את {len(pending_months)} החודשים האחרונים "
+            f"({', '.join(pending_months)}), ללא תלות ב-scanned_months")
+    else:
+        pending_months = [m for m in all_months if m not in scanned_months]
+        log(f"סה\"כ {len(all_months)} חודשים בטווח ({HISTORY_START} עד {today}), "
+            f"{len(pending_months)} עדיין לא נסרקו")
 
     session = requests.Session()
     t0 = time.monotonic()
