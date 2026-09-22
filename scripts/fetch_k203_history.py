@@ -39,6 +39,7 @@ period הוא התקופה שהדוח מדווח עליה (מנותח מהכות
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -142,6 +143,30 @@ def save_json(path, obj):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(obj, f, ensure_ascii=False, separators=(",", ":"))
+
+
+def _run(cmd, **kw):
+    return subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True, **kw)
+
+
+def git_commit_push(message):
+    """Commit+push תחת reports/ ו-state/ אחרי כל חודש שהושלם, במקום commit
+    ענק אחד בסוף כל הריצה - כך שאם הריצה נכשלת/נחתכת באמצע, כל מה שכבר
+    הורד נשאר בגיט, ולא צריך לחכות לכל התקציב לפני שרואים push ראשון.
+    לא "מקביל" ל-fetch (זה תהליך פייתון יחיד סינכרוני), אבל מפזר את עלות
+    ה-git add/commit/push על פני הריצה במקום גוש אחד בסוף."""
+    _run(["git", "add", "reports", "state"])
+    diff = _run(["git", "diff", "--staged", "--quiet"])
+    if diff.returncode == 0:
+        return  # אין שינויים
+    _run(["git", "commit", "-m", message])
+    for attempt in range(1, 6):
+        push = _run(["git", "push"])
+        if push.returncode == 0:
+            return
+        log(f"  ⚠ git push נדחה (נסיון {attempt}) - מבצע rebase ומנסה שוב: {push.stderr.strip()[:200]}")
+        _run(["git", "pull", "--rebase", "origin", "main"])
+    log("  ✗ git push נכשל אחרי 5 נסיונות - הריצה הבאה/ה-workflow-level commit ינסו שוב")
 
 
 def month_windows(start, end):
@@ -379,6 +404,10 @@ def main():
         if month_done:
             scanned_months.add(ym)
             stats["months_scanned"] += 1
+            save_json(FETCHED_IDS_PATH, sorted(fetched_ids))
+            save_json(SCANNED_MONTHS_PATH, sorted(scanned_months))
+            save_json(CANONICAL_PATH, canonical)
+            git_commit_push(f"k203: {ym} ({len(reports)} reports)")
         else:
             log(f"  חודש {ym} לא הושלם (תקציב זמן/חסימה) - יושלם בריצה הבאה")
             break
@@ -388,6 +417,7 @@ def main():
     save_json(FETCHED_IDS_PATH, sorted(fetched_ids))
     save_json(SCANNED_MONTHS_PATH, sorted(scanned_months))
     save_json(CANONICAL_PATH, canonical)
+    git_commit_push("k203: final save (partial month / end of run)")
     multi = {k: v for k, v in canonical.items() if len(v["all_ids"]) > 1}
     if multi:
         log(f"\n⚠ {len(multi)} צירופי חברה+תקופה עם יותר מדוח אחד (מקורי+תיקון/ים) - "

@@ -24,26 +24,36 @@ concurrency:
 jobs:
   fetch:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # תקציב ברירת מחדל (18 דק') + commit/push לכל חודש (לא רק בסוף) יכולים
+    # לצבור זמן - מרווח נדיב מעל ה-budget כדי ש-git push של קבצים גדולים
+    # לא ייחתך ע"י timeout של ה-job.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install requests
-      - name: Fetch batch of ק203 reports
+      - name: Configure git
+        # git config *לפני* הסקריפט - הוא מבצע commit+push בעצמו אחרי כל
+        # חודש שהושלם (במקום commit ענק אחד בסוף), כדי שאם הריצה נכשלת/
+        # נחתכת באמצע לא נאבד את כל מה שכבר הורד.
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+      - name: Fetch batch of ק203 reports (commits after each completed month)
         env:
           RUN_BUDGET_SECONDS: ${{ inputs.budget_seconds }}
           HISTORY_START: ${{ inputs.history_start }}
         run: python scripts/fetch_k203_history.py
-      - name: Commit results
+      - name: Final safety-net commit
+        # ברוב המקרים הסקריפט כבר commit+push הכל בעצמו; זה רק תופס שאריות
+        # (למשל אם ה-push האחרון בתוך הסקריפט נכשל אחרי 5 נסיונות).
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
           git add state
-          [ -d reports ] && git add reports || echo "no reports fetched this run"
+          [ -d reports ] && git add reports || true
           git diff --staged --quiet && echo "no changes" && exit 0
-          git commit -m "k203: fetch batch $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git commit -m "k203: safety-net commit $(date -u +%Y-%m-%dT%H:%M:%SZ)"
           for i in 1 2 3 4 5; do
             if git push; then
               echo "push succeeded on attempt $i"
