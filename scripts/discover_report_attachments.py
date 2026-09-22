@@ -152,27 +152,36 @@ def main():
         })
         time.sleep(0.3)
 
-    print(json.dumps(out, ensure_ascii=False, indent=2))
+    out["debug_form_ids"] = [repr(s.get("formId")) for s in out["samples"]]
 
     # שלב 3: השערה - TXT1 של ק203 (דוח חודשי) הוא בעצם הקובץ המפורט המלא
     # (28 עמודות, שורה לכל נייר), ו-exposure.py רק מסנן/שומר 4 מהעמודות
     # ו-7 קודים. בודקים את זה ישירות מול הכותרת שקיבלנו מהמשתמש.
-    log(f"\n(דיבוג) formId גולמיים: {[repr(s.get('formId')) for s in out['samples']]}")
-    k203 = next((s for s in out["samples"] if _clean(s.get("formId")) == "ק203"), None)
+    k203 = next((s for s in out["samples"]
+                 if _clean(s.get("formId")) == "ק203" or (s.get("formId") or "").find("203") >= 0),
+                None)
+    out["k203_step3"] = {"found_k203_sample": bool(k203)}
     if k203 and k203["attachments"]:
         att = k203["attachments"][0]
-        log(f"\nשלב 3: הורדת TXT1 בפועל לדוח {k203['report_id']} ({att['url']})...")
+        out["k203_step3"]["report_id"] = k203["report_id"]
+        out["k203_step3"]["url"] = att["url"]
         try:
             content = fetch_txt1(session, k203["report_id"], att["url"])
             text = content.decode("utf-8-sig", errors="replace")
             lines = text.splitlines()
-            log(f"  {len(lines)} שורות, {len(content)} bytes")
-            log(f"  כותרת: {lines[0] if lines else '(ריק)'}")
-            log(f"  שורה 2: {lines[1] if len(lines) > 1 else '(אין)'}")
-            header_cols = lines[0].split(",") if lines else []
-            log(f"  מספר עמודות בכותרת: {len(header_cols)}")
+            out["k203_step3"]["num_lines"] = len(lines)
+            out["k203_step3"]["num_bytes"] = len(content)
+            out["k203_step3"]["header_line"] = lines[0] if lines else None
+            out["k203_step3"]["row2"] = lines[1] if len(lines) > 1 else None
+            out["k203_step3"]["num_header_cols"] = len(lines[0].split(",")) if lines else 0
         except Exception as e:
-            log(f"  שגיאה: {e}")
+            out["k203_step3"]["error"] = f"{type(e).__name__}: {e}"
+
+    log("writing results to discover_results.json")
+    with open("discover_results.json", "w", encoding="utf-8") as f:
+        json.dump(out, f, ensure_ascii=False, indent=2)
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+    sys.stdout.flush()
 
 
 if __name__ == "__main__":

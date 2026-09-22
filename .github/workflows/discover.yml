@@ -1,6 +1,8 @@
 name: discover-report-attachments
 on:
   workflow_dispatch:
+permissions:
+  contents: write
 jobs:
   discover:
     runs-on: ubuntu-latest
@@ -11,3 +13,11 @@ jobs:
           python-version: "3.12"
       - run: pip install requests
       - run: python scripts/discover_report_attachments.py
+      - name: Commit results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add discover_results.json
+          git diff --staged --quiet && echo "no changes" && exit 0
+          git commit -m "discover: results $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push
