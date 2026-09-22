@@ -16,9 +16,22 @@ scripts/funds_info/exposure.py בריפו Revach).
 
 שמירה: JSON קומפקטי לכל דוח (columns משותף + rows כרשימת-רשימות, לא
 מילון לשורה - חוסך פי 2-3 בגודל) תחת:
-  reports/<company_safe>/<report_id>_<yyyymm>.json
-מניפסט התקדמות state/fetched_report_ids.json כדי שריצות חוזרות ימשיכו
-במקום להתחיל מחדש (יש כנראה אלפי דוחות על פני שנים - ריצה אחת לא מספיקה).
+  reports/<company_safe>/<report_id>_<period_yyyymm>.json
+period הוא התקופה שהדוח מדווח עליה (מנותח מהכותרת, למשל "אפריל 2026"),
+לא החודש שבו נמצא/סרקנו אותו - דוח יכול להתפרסם או להיות מתוקן חודשים
+אחרי התקופה עצמה.
+
+יש בדרך כלל יותר מדוח אחד לאותה חברה+תקופה (מקורי + תיקון/ים) - נראה
+בפועל, למשל "קסם" עם 3 דוחות שונים לאותה "דוח חודשי-אפריל 2026". בלי
+לדעת עדיין את הסמנטיקה המדויקת של שדה ה-correctives במטא-דאטה (נשמר גולמי
+בכל קובץ, ל-analysis עתידי), state/canonical_by_period.json עוקב אחרי כל
+ה-report_id-ים לכל צירוף חברה+תקופה ומסמן את ה-report_id הגבוה ביותר
+(=הוגש מאוחר יותר) כ-canonical_id - כל הדוחות עצמם נשמרים בדיסק (לא נמחק
+מידע), רק שממתי צריך "את הגרסה הנכונה" צריך לסנן לפי canonical_id.
+
+מניפסט התקדמות state/fetched_report_ids.json + state/scanned_months.json
+כדי שריצות חוזרות ימשיכו במקום להתחיל מחדש (יש כנראה אלפי דוחות על פני
+שנים - ריצה אחת לא מספיקה).
 
 תקציב זמן לריצה: עוצר לאחר RUN_BUDGET_SECONDS (משאיר מרווח ל-commit/push
 לפני timeout של ה-job) - להריץ שוב (ידנית או בקרון) עד שההיסטוריה מכוסה.
@@ -60,12 +73,37 @@ OUT_DIR = os.path.join(REPO_ROOT, "reports")
 STATE_DIR = os.path.join(REPO_ROOT, "state")
 FETCHED_IDS_PATH = os.path.join(STATE_DIR, "fetched_report_ids.json")
 SCANNED_MONTHS_PATH = os.path.join(STATE_DIR, "scanned_months.json")
+CANONICAL_PATH = os.path.join(STATE_DIR, "canonical_by_period.json")
 
-# תחילת ההיסטוריה שננסה לכסות - נקודת התחלה שמרנית; חודשים ריקים לגמרי
-# (לפני שהחברה קיימת/לפני שהפורמט הזה היה בשימוש) פשוט מחזירים 0 תוצאות
-# בעלות זניחה (קריאת רשימה אחת), אז אין נזק בלנסות רחוק אחורה.
+# נבדק בפועל (ריצה מלאה 2013-01 עד 2020-11): 0 דוחות בכל חודש - הפורמט הזה
+# כנראה לא היה בשימוש/מאוחסן במאיה לפני דצמבר 2020. HISTORY_START מתחיל שם
+# במקום מ-2013 כדי לא לבזבז מאות בקשות ריקות; ניתן לעקוף עם env var אם
+# בעתיד מתגלה שיש בכל זאת נתונים מוקדמים יותר.
 _hs = os.environ.get("HISTORY_START")
-HISTORY_START = date(*(int(x) for x in _hs.split("-"))) if _hs else date(2013, 1, 1)
+HISTORY_START = date(*(int(x) for x in _hs.split("-"))) if _hs else date(2020, 12, 1)
+
+HEB_MONTHS = {"ינואר": 1, "פברואר": 2, "מרץ": 3, "מרס": 3, "אפריל": 4, "מאי": 5, "יוני": 6,
+              "יולי": 7, "אוגוסט": 8, "ספטמבר": 9, "אוקטובר": 10, "נובמבר": 11, "דצמבר": 12}
+
+
+def parse_period(title, fallback_ym):
+    """'דוח חודשי-אפריל 2026' -> '2026-04' (התקופה שהדוח *מדווח עליה*,
+    לא החודש שבו הוא נמצא/פורסם - דוח יכול להתפרסם/להיות מתוקן חודשים
+    אחרי התקופה עצמה - זה מה ש-fallback_ym (חודש הסריקה) היה מייצג בטעות)."""
+    t = _clean(title)
+    parts = t.split("-")
+    if len(parts) < 2:
+        return fallback_ym
+    tail = _clean(parts[-1])
+    year = mon = None
+    for tok in tail.split():
+        if tok.isdigit() and len(tok) == 4:
+            year = int(tok)
+        elif tok in HEB_MONTHS:
+            mon = HEB_MONTHS[tok]
+    if year and mon:
+        return f"{year:04d}-{mon:02d}"
+    return fallback_ym
 
 RUN_BUDGET_SECONDS = int(os.environ.get("RUN_BUDGET_SECONDS") or 18 * 60)   # משאיר מרווח לפני timeout/commit
 SLEEP_BETWEEN_CALLS = 0.7   # מאיה חוסמת (403) אחרי סדרה מהירה מדי של בקשות
@@ -243,7 +281,13 @@ def main():
 
     fetched_ids = set(load_json(FETCHED_IDS_PATH, []))
     scanned_months = set(load_json(SCANNED_MONTHS_PATH, []))
-    log(f"מצב קיים: {len(fetched_ids)} דוחות שכבר נשלפו, {len(scanned_months)} חודשים שכבר נסרקו")
+    # company|period_ym -> {"canonical_id": int, "all_ids": [int,...]} - יתכנו
+    # כמה דוחות לאותה חברה+תקופה (דוח מקורי + תיקון/ים); בלי לדעת עדיין את
+    # הסמנטיקה המדויקת של שדה ה-correctives במטא-דאטה, ברירת המחדל השמרנית
+    # היא: report_id גבוה יותר = הוגש מאוחר יותר = כנראה הגרסה הסופית.
+    canonical = load_json(CANONICAL_PATH, {})
+    log(f"מצב קיים: {len(fetched_ids)} דוחות שכבר נשלפו, {len(scanned_months)} חודשים שכבר נסרקו, "
+        f"{len(canonical)} צירופי חברה+תקופה")
 
     today = datetime.now(timezone.utc).date()
     all_months = month_windows(HISTORY_START, today)
@@ -297,17 +341,31 @@ def main():
                     continue
                 columns, rows = fetch_txt1_rows(session, txt1["url"])
                 company = rep["company"]
-                out_path = os.path.join(OUT_DIR, safe_name(company), f"{rid}_{ym.replace('-', '')}.json")
+                period_ym = parse_period(rep["title"], ym)
+                out_path = os.path.join(OUT_DIR, safe_name(company),
+                                         f"{rid}_{period_ym.replace('-', '')}.json")
                 save_json(out_path, {
                     "report_id": rid, "company": company, "title": rep["title"],
-                    "form_id": "ק203", "month": ym,
+                    "form_id": "ק203", "period": period_ym, "scanned_in_month": ym,
+                    "publish_date": meta.get("publishDate"), "is_priority": meta.get("isPriority"),
+                    "correctives": meta.get("correctives"), "comment": meta.get("comment"),
                     "fetched_at": datetime.now(timezone.utc).isoformat(),
                     "source_url": FILES_BASE + txt1["url"],
                     "columns": columns, "rows": rows,
                 })
                 fetched_ids.add(rid)
                 stats["reports_fetched"] += 1
-                log(f"  ✓ {rid} ({company}): {len(rows)} שורות -> {os.path.relpath(out_path, REPO_ROOT)}")
+
+                key = f"{company}|{period_ym}"
+                entry = canonical.setdefault(key, {"canonical_id": rid, "all_ids": []})
+                if rid not in entry["all_ids"]:
+                    entry["all_ids"].append(rid)
+                if rid > entry["canonical_id"]:
+                    entry["canonical_id"] = rid
+                dup_note = f" (⚠ {len(entry['all_ids'])} דוחות לתקופה הזו - all_ids={entry['all_ids']})" \
+                    if len(entry["all_ids"]) > 1 else ""
+                log(f"  ✓ {rid} ({company}, תקופה {period_ym}): {len(rows)} שורות "
+                    f"-> {os.path.relpath(out_path, REPO_ROOT)}{dup_note}")
             except Blocked as e:
                 log(f"  {e} - עוצר את כל הריצה")
                 blocked = True
@@ -329,6 +387,11 @@ def main():
 
     save_json(FETCHED_IDS_PATH, sorted(fetched_ids))
     save_json(SCANNED_MONTHS_PATH, sorted(scanned_months))
+    save_json(CANONICAL_PATH, canonical)
+    multi = {k: v for k, v in canonical.items() if len(v["all_ids"]) > 1}
+    if multi:
+        log(f"\n⚠ {len(multi)} צירופי חברה+תקופה עם יותר מדוח אחד (מקורי+תיקון/ים) - "
+            f"ר' {os.path.relpath(CANONICAL_PATH, REPO_ROOT)} ל-canonical_id מומלץ לכל אחד")
 
     remaining = len(all_months) - len(scanned_months)
     log(f"\n=== סיכום ריצה ===")
