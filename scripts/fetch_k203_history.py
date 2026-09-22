@@ -106,7 +106,7 @@ def parse_period(title, fallback_ym):
         return f"{year:04d}-{mon:02d}"
     return fallback_ym
 
-RUN_BUDGET_SECONDS = int(os.environ.get("RUN_BUDGET_SECONDS") or 18 * 60)   # משאיר מרווח לפני timeout/commit
+RUN_BUDGET_SECONDS = int(os.environ.get("RUN_BUDGET_SECONDS") or 3 * 60 * 60)   # 3h ברירת מחדל - ריפו ציבורי, דקות Actions חינם; משאיר מרווח לפני timeout-minutes של ה-job
 SLEEP_BETWEEN_CALLS = 0.7   # מאיה חוסמת (403) אחרי סדרה מהירה מדי של בקשות
 
 _MARKS = "‏‎‪‫‬‭‮ "

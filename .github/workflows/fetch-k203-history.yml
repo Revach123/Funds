@@ -1,17 +1,16 @@
 name: fetch-k203-history
 on:
   schedule:
-    # כל 30 דק' - מרווח בטוח מעל timeout-minutes/RUN_BUDGET_SECONDS כדי
-    # שריצות לא יצטברו בתור. יש להריץ כמה עשרות פעמים כדי לכסות 2013-היום
-    # (חודש אחד לוקח כ-2-4 דק', יש כ-160 חודשים) - עצור/מחק כשההיסטוריה מכוסה
-    # (state/scanned_months.json מכיל את כל month_windows(HISTORY_START, today)).
-    - cron: "*/30 * * * *"
+    # רשת ביטחון בלבד - התקציב עכשיו גדול (שעות), אז ריצה בודדת עשויה
+    # לכסות את כל מה שנשאר; כל 6 שעות מספיק כדי לתפוס המשך אם ריצה נכשלה
+    # בלי ליצור עומס בתור (concurrency group אחד, cancel-in-progress:false).
+    - cron: "0 */6 * * *"
   workflow_dispatch:
     inputs:
       budget_seconds:
-        description: "Max seconds to spend fetching before stopping and committing (default 1080 = 18min)"
+        description: "Max seconds to spend fetching before stopping and committing (default 10800 = 3h)"
         required: false
-        default: "1080"
+        default: "10800"
       history_start:
         description: "Override HISTORY_START (YYYY-MM-DD) for testing a narrower/more recent range"
         required: false
@@ -24,10 +23,10 @@ concurrency:
 jobs:
   fetch:
     runs-on: ubuntu-latest
-    # תקציב ברירת מחדל (18 דק') + commit/push לכל חודש (לא רק בסוף) יכולים
-    # לצבור זמן - מרווח נדיב מעל ה-budget כדי ש-git push של קבצים גדולים
-    # לא ייחתך ע"י timeout של ה-job.
-    timeout-minutes: 40
+    # תקציב ברירת מחדל (3 שעות) + commit/push לכל חודש - מרווח נדיב מעל
+    # ה-budget (עד תקרת ה-360 דק' של GitHub Actions) כדי ש-git push של
+    # קבצים גדולים לא ייחתך ע"י timeout של ה-job. ריפו ציבורי = דקות חינם.
+    timeout-minutes: 330
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
