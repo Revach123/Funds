@@ -1,0 +1,44 @@
+name: fetch-k203-history
+on:
+  workflow_dispatch:
+    inputs:
+      budget_seconds:
+        description: "Max seconds to spend fetching before stopping and committing (default 1080 = 18min)"
+        required: false
+        default: "1080"
+permissions:
+  contents: write
+concurrency:
+  group: fetch-k203-history
+  cancel-in-progress: false
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests
+      - name: Fetch batch of ק203 reports
+        env:
+          RUN_BUDGET_SECONDS: ${{ inputs.budget_seconds }}
+        run: python scripts/fetch_k203_history.py
+      - name: Commit results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add reports state
+          git diff --staged --quiet && echo "no changes" && exit 0
+          git commit -m "k203: fetch batch $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          for i in 1 2 3 4 5; do
+            if git push; then
+              echo "push succeeded on attempt $i"
+              exit 0
+            fi
+            echo "push rejected - rebasing and retrying ($i)"
+            git pull --rebase origin main
+          done
+          echo "push failed after 5 attempts"
+          exit 1

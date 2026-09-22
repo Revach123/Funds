@@ -1,0 +1,306 @@
+# -*- coding: utf-8 -*-
+"""
+fetch_k203_history.py — משיכת כל היסטוריית דוחות ק203 ("דוח חודשי") ממאיה,
+כולל הקובץ המפורט ברמת הנייר הבודד (לא רק סיכום מצומצם כמו
+scripts/funds_info/exposure.py בריפו Revach).
+
+מקור: אותו endpoint שכבר מוכח עובד ב-Revach:
+  POST maya.tase.co.il/api/v1/reports/mutual-funds  (freeText="דוח חודשי")
+  -> GET  maya.tase.co.il/api/v1/reports/{id}          (metadata - attachments)
+  -> GET  mayafiles.tase.co.il/<attachment txt1 url>   (התוכן עצמו)
+
+אומת ב-scripts/discover_report_attachments.py (2026-09-22): ה-title
+"דוח חודשי" תמיד formId=ק203, וה-attachment היחיד (fileType=txt1) הוא
+בדיוק הקובץ המפורט ברמת הנייר הבודד (28 עמודות, TAB-delimited, שורה לכל
+נייר בכל קרן של החברה) - זהה לקובץ הדוגמה שהמשתמש סיפק.
+
+שמירה: JSON קומפקטי לכל דוח (columns משותף + rows כרשימת-רשימות, לא
+מילון לשורה - חוסך פי 2-3 בגודל) תחת:
+  reports/<company_safe>/<report_id>_<yyyymm>.json
+מניפסט התקדמות state/fetched_report_ids.json כדי שריצות חוזרות ימשיכו
+במקום להתחיל מחדש (יש כנראה אלפי דוחות על פני שנים - ריצה אחת לא מספיקה).
+
+תקציב זמן לריצה: עוצר לאחר RUN_BUDGET_SECONDS (משאיר מרווח ל-commit/push
+לפני timeout של ה-job) - להריץ שוב (ידנית או בקרון) עד שההיסטוריה מכוסה.
+"""
+import json
+import os
+import re
+import sys
+import time
+from datetime import date, datetime, timedelta, timezone
+
+try:
+    import requests
+except ImportError:
+    requests = None
+
+BASE = "https://maya.tase.co.il"
+FILES_BASE = "https://mayafiles.tase.co.il/"
+LIST_URL = BASE + "/api/v1/reports/mutual-funds"
+META_URL = BASE + "/api/v1/reports/{id}"
+
+HEADERS = {
+    "accept": "application/json, text/plain, */*",
+    "accept-language": "he-IL",
+    "content-type": "application/json",
+    "x-maya-with": "allow",
+    "user-agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                   "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"),
+    "referer": BASE + "/he/reports/mutual-funds",
+}
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+OUT_DIR = os.path.join(REPO_ROOT, "reports")
+STATE_DIR = os.path.join(REPO_ROOT, "state")
+FETCHED_IDS_PATH = os.path.join(STATE_DIR, "fetched_report_ids.json")
+SCANNED_MONTHS_PATH = os.path.join(STATE_DIR, "scanned_months.json")
+
+# תחילת ההיסטוריה שננסה לכסות - נקודת התחלה שמרנית; חודשים ריקים לגמרי
+# (לפני שהחברה קיימת/לפני שהפורמט הזה היה בשימוש) פשוט מחזירים 0 תוצאות
+# בעלות זניחה (קריאת רשימה אחת), אז אין נזק בלנסות רחוק אחורה.
+HISTORY_START = date(2013, 1, 1)
+
+RUN_BUDGET_SECONDS = int(os.environ.get("RUN_BUDGET_SECONDS") or 18 * 60)   # משאיר מרווח לפני timeout/commit
+SLEEP_BETWEEN_CALLS = 0.25
+
+_MARKS = "‏‎‪‫‬‭‮ "
+
+
+def log(*a):
+    print(*a, file=sys.stderr)
+    sys.stderr.flush()
+
+
+def _clean(s):
+    if s is None:
+        return ""
+    s = str(s)
+    for m in _MARKS:
+        s = s.replace(m, "")
+    return s.strip()
+
+
+def safe_name(s):
+    s = _clean(s)
+    s = re.sub(r"[^\w\-א-ת]+", "_", s, flags=re.UNICODE).strip("_")
+    return s or "unknown"
+
+
+def load_json(path, default):
+    if not os.path.exists(path):
+        return default
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save_json(path, obj):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False, separators=(",", ":"))
+
+
+def month_windows(start, end):
+    """['2013-01', '2013-02', ...] עד החודש הנוכחי (כולל)."""
+    out = []
+    y, m = start.year, start.month
+    while (y, m) <= (end.year, end.month):
+        out.append(f"{y:04d}-{m:02d}")
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+    return out
+
+
+def month_bounds(ym):
+    y, m = (int(x) for x in ym.split("-"))
+    frm = date(y, m, 1)
+    to = date(y + 1, 1, 1) if m == 12 else date(y, m + 1, 1)
+    z_frm, z_to = "T00:00:00.000Z", "T00:00:00.000Z"
+    return frm.isoformat() + z_frm, to.isoformat() + z_to
+
+
+def _post_with_retries(session, url, body, timeout=30, what="request"):
+    last = None
+    for attempt in (1, 2, 3):
+        try:
+            r = session.post(url, headers=HEADERS, data=json.dumps(body), timeout=timeout)
+            _ = r.content
+            r.raise_for_status()
+            return r
+        except Exception as e:  # noqa: BLE001
+            last = e
+            if attempt < 3:
+                wait = 1 if attempt == 1 else 3
+                log(f"  ⚠ {what}: נסיון {attempt} נכשל ({type(e).__name__}: {e}); ממתין {wait}s")
+                time.sleep(wait)
+    raise RuntimeError(f"{what} נכשל אחרי 3 נסיונות: {last}") from last
+
+
+def _get_with_retries(session, url, timeout=60, what="request"):
+    hdrs = {k: v for k, v in HEADERS.items() if k != "content-type"}
+    last = None
+    for attempt in (1, 2, 3):
+        try:
+            r = session.get(url, headers=hdrs, timeout=timeout)
+            _ = r.content
+            r.raise_for_status()
+            return r
+        except Exception as e:  # noqa: BLE001
+            last = e
+            if attempt < 3:
+                wait = 1 if attempt == 1 else 3
+                log(f"  ⚠ {what}: נסיון {attempt} נכשל ({type(e).__name__}: {e}); ממתין {wait}s")
+                time.sleep(wait)
+    raise RuntimeError(f"{what} נכשל אחרי 3 נסיונות: {last}") from last
+
+
+def list_month_reports(session, ym):
+    """כל דוחות ק203 ('דוח חודשי') בחודש נתון, עם דפדוף מלא."""
+    frm, to = month_bounds(ym)
+    out, seen, page = [], set(), 1
+    while True:
+        body = {"pageNumber": page, "fromDate": frm, "toDate": to,
+                "noMeetings": False, "isSingle": False, "isIntendToTaseMember": False,
+                "by": "company", "freeText": "דוח חודשי", "limit": 30, "offset": (page - 1) * 30}
+        r = _post_with_retries(session, LIST_URL, body, what=f"רשימה {ym} עמוד {page}")
+        data = r.json() or []
+        if not data:
+            break
+        new = 0
+        for rep in data:
+            rid = rep.get("id")
+            if rid in seen:
+                continue
+            seen.add(rid)
+            new += 1
+            title = _clean(rep.get("title") or "")
+            if not title.startswith("דוח חודשי"):
+                continue  # בטיחות - freeText יכול תיאורטית להתאים גם לכותרות אחרות
+            for comp in (rep.get("companies") or []):
+                out.append({"id": rid, "title": rep.get("title"),
+                            "company": _clean(comp.get("name") or "")})
+        if new == 0 or len(data) < 30:
+            break
+        page += 1
+        time.sleep(SLEEP_BETWEEN_CALLS)
+    return out
+
+
+def fetch_meta(session, report_id):
+    r = _get_with_retries(session, META_URL.format(id=report_id), what=f"מטא-דאטה {report_id}")
+    return r.json()
+
+
+def fetch_txt1_rows(session, url_path):
+    full_url = FILES_BASE + url_path.lstrip("/")
+    r = _get_with_retries(session, full_url, what=f"TXT1 {url_path}")
+    text = r.content.decode("utf-8-sig", errors="replace")
+    lines = [ln for ln in text.split("\n") if ln.strip("\r\n \t")]
+    if not lines:
+        return [], []
+    columns = [_clean(c) for c in lines[0].split("\t")]
+    rows = []
+    for ln in lines[1:]:
+        parts = ln.rstrip("\r").split("\t")
+        if len(parts) < len(columns):
+            parts += [""] * (len(columns) - len(parts))
+        rows.append([_clean(p) for p in parts[:len(columns)]])
+    return columns, rows
+
+
+def main():
+    if requests is None:
+        log("שגיאה: requests לא מותקן")
+        sys.exit(1)
+
+    fetched_ids = set(load_json(FETCHED_IDS_PATH, []))
+    scanned_months = set(load_json(SCANNED_MONTHS_PATH, []))
+    log(f"מצב קיים: {len(fetched_ids)} דוחות שכבר נשלפו, {len(scanned_months)} חודשים שכבר נסרקו")
+
+    today = datetime.now(timezone.utc).date()
+    all_months = month_windows(HISTORY_START, today)
+    pending_months = [m for m in all_months if m not in scanned_months]
+    log(f"סה\"כ {len(all_months)} חודשים בטווח ({HISTORY_START} עד {today}), "
+        f"{len(pending_months)} עדיין לא נסרקו")
+
+    session = requests.Session()
+    t0 = time.monotonic()
+    stats = {"months_scanned": 0, "reports_found": 0, "reports_fetched": 0,
+             "reports_skipped_existing": 0, "errors": 0}
+
+    def budget_left():
+        return time.monotonic() - t0 < RUN_BUDGET_SECONDS
+
+    for ym in pending_months:
+        if not budget_left():
+            log(f"תקציב הזמן ({RUN_BUDGET_SECONDS}s) נגמר - עוצר, ריצה הבאה תמשיך מכאן")
+            break
+        log(f"\n=== סורק חודש {ym} ===")
+        try:
+            reports = list_month_reports(session, ym)
+        except Exception as e:
+            log(f"  שגיאה בסריקת {ym}: {e}")
+            stats["errors"] += 1
+            continue
+        log(f"  {len(reports)} דוחות ק203 נמצאו")
+        stats["reports_found"] += len(reports)
+
+        month_done = True
+        for rep in reports:
+            if not budget_left():
+                month_done = False
+                break
+            rid = rep["id"]
+            if rid in fetched_ids:
+                stats["reports_skipped_existing"] += 1
+                continue
+            try:
+                meta = fetch_meta(session, rid)
+                atts = meta.get("attachments") or []
+                txt1 = next((a for a in atts if (a.get("fileType") or "").lower() == "txt1"), None)
+                if not txt1 or not txt1.get("url"):
+                    log(f"  ⚠ דוח {rid}: אין attachment מסוג txt1, מדלג")
+                    fetched_ids.add(rid)  # לא ננסה שוב - זה קבוע למבנה הדוח
+                    continue
+                columns, rows = fetch_txt1_rows(session, txt1["url"])
+                company = rep["company"]
+                out_path = os.path.join(OUT_DIR, safe_name(company), f"{rid}_{ym.replace('-', '')}.json")
+                save_json(out_path, {
+                    "report_id": rid, "company": company, "title": rep["title"],
+                    "form_id": "ק203", "month": ym,
+                    "fetched_at": datetime.now(timezone.utc).isoformat(),
+                    "source_url": FILES_BASE + txt1["url"],
+                    "columns": columns, "rows": rows,
+                })
+                fetched_ids.add(rid)
+                stats["reports_fetched"] += 1
+                log(f"  ✓ {rid} ({company}): {len(rows)} שורות -> {os.path.relpath(out_path, REPO_ROOT)}")
+            except Exception as e:  # noqa: BLE001
+                log(f"  ✗ דוח {rid} ({rep['company']}) נכשל: {e}")
+                stats["errors"] += 1
+            time.sleep(SLEEP_BETWEEN_CALLS)
+
+        if month_done:
+            scanned_months.add(ym)
+            stats["months_scanned"] += 1
+        else:
+            log(f"  חודש {ym} לא הושלם (תקציב זמן) - יושלם בריצה הבאה")
+            break
+
+    save_json(FETCHED_IDS_PATH, sorted(fetched_ids))
+    save_json(SCANNED_MONTHS_PATH, sorted(scanned_months))
+
+    remaining = len(all_months) - len(scanned_months)
+    log(f"\n=== סיכום ריצה ===")
+    log(json.dumps({**stats, "months_remaining": remaining,
+                     "total_fetched_ids": len(fetched_ids)}, ensure_ascii=False, indent=2))
+    if remaining > 0:
+        log(f"\n⚠ נותרו {remaining} חודשים לסריקה - יש להריץ את ה-workflow שוב כדי להמשיך")
+    else:
+        log("\n✓ כל טווח ההיסטוריה נסרק")
+
+
+if __name__ == "__main__":
+    main()
