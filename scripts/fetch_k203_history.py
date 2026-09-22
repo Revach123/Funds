@@ -59,10 +59,11 @@ SCANNED_MONTHS_PATH = os.path.join(STATE_DIR, "scanned_months.json")
 # תחילת ההיסטוריה שננסה לכסות - נקודת התחלה שמרנית; חודשים ריקים לגמרי
 # (לפני שהחברה קיימת/לפני שהפורמט הזה היה בשימוש) פשוט מחזירים 0 תוצאות
 # בעלות זניחה (קריאת רשימה אחת), אז אין נזק בלנסות רחוק אחורה.
-HISTORY_START = date(2013, 1, 1)
+_hs = os.environ.get("HISTORY_START")
+HISTORY_START = date(*(int(x) for x in _hs.split("-"))) if _hs else date(2013, 1, 1)
 
 RUN_BUDGET_SECONDS = int(os.environ.get("RUN_BUDGET_SECONDS") or 18 * 60)   # משאיר מרווח לפני timeout/commit
-SLEEP_BETWEEN_CALLS = 0.25
+SLEEP_BETWEEN_CALLS = 0.7   # מאיה חוסמת (403) אחרי סדרה מהירה מדי של בקשות
 
 _MARKS = "‏‎‪‫‬‭‮ "
 
@@ -121,39 +122,48 @@ def month_bounds(ym):
     return frm.isoformat() + z_frm, to.isoformat() + z_to
 
 
-def _post_with_retries(session, url, body, timeout=30, what="request"):
+class Blocked(Exception):
+    """מאיה החזירה 403 אחרי backoff ארוך - כנראה חסימת קצב זמנית. עוצרים
+    את כל הריצה (לא רק החודש הנוכחי) כדי לא לבזבז תקציב על עוד 403-ים."""
+
+
+def _is_rate_limit(e):
+    return isinstance(e, requests.HTTPError) and e.response is not None and e.response.status_code == 403
+
+
+def _request_with_retries(fn, what):
+    """fn() -> Response. 403 מקבל backoff ארוך משלו (60s) לפני שנכנע ומסמן Blocked;
+    שגיאות אחרות - backoff קצר רגיל (1s, 3s)."""
     last = None
     for attempt in (1, 2, 3):
         try:
-            r = session.post(url, headers=HEADERS, data=json.dumps(body), timeout=timeout)
+            r = fn()
             _ = r.content
             r.raise_for_status()
             return r
         except Exception as e:  # noqa: BLE001
             last = e
+            if _is_rate_limit(e):
+                if attempt >= 2:
+                    raise Blocked(f"{what}: 403 אחרי {attempt} נסיונות - מאיה חוסמת") from e
+                log(f"  ⚠ {what}: 403 (חסימת קצב חשודה) - ממתין 60s ומנסה שוב")
+                time.sleep(60)
+                continue
             if attempt < 3:
                 wait = 1 if attempt == 1 else 3
                 log(f"  ⚠ {what}: נסיון {attempt} נכשל ({type(e).__name__}: {e}); ממתין {wait}s")
                 time.sleep(wait)
     raise RuntimeError(f"{what} נכשל אחרי 3 נסיונות: {last}") from last
+
+
+def _post_with_retries(session, url, body, timeout=30, what="request"):
+    return _request_with_retries(
+        lambda: session.post(url, headers=HEADERS, data=json.dumps(body), timeout=timeout), what)
 
 
 def _get_with_retries(session, url, timeout=60, what="request"):
     hdrs = {k: v for k, v in HEADERS.items() if k != "content-type"}
-    last = None
-    for attempt in (1, 2, 3):
-        try:
-            r = session.get(url, headers=hdrs, timeout=timeout)
-            _ = r.content
-            r.raise_for_status()
-            return r
-        except Exception as e:  # noqa: BLE001
-            last = e
-            if attempt < 3:
-                wait = 1 if attempt == 1 else 3
-                log(f"  ⚠ {what}: נסיון {attempt} נכשל ({type(e).__name__}: {e}); ממתין {wait}s")
-                time.sleep(wait)
-    raise RuntimeError(f"{what} נכשל אחרי 3 נסיונות: {last}") from last
+    return _request_with_retries(lambda: session.get(url, headers=hdrs, timeout=timeout), what)
 
 
 def list_month_reports(session, ym):
@@ -233,6 +243,7 @@ def main():
     def budget_left():
         return time.monotonic() - t0 < RUN_BUDGET_SECONDS
 
+    blocked = False
     for ym in pending_months:
         if not budget_left():
             log(f"תקציב הזמן ({RUN_BUDGET_SECONDS}s) נגמר - עוצר, ריצה הבאה תמשיך מכאן")
@@ -240,6 +251,10 @@ def main():
         log(f"\n=== סורק חודש {ym} ===")
         try:
             reports = list_month_reports(session, ym)
+        except Blocked as e:
+            log(f"  {e} - עוצר את כל הריצה (לא רק החודש), כדי לא לבזבז תקציב על עוד חסימות")
+            blocked = True
+            break
         except Exception as e:
             log(f"  שגיאה בסריקת {ym}: {e}")
             stats["errors"] += 1
@@ -277,6 +292,11 @@ def main():
                 fetched_ids.add(rid)
                 stats["reports_fetched"] += 1
                 log(f"  ✓ {rid} ({company}): {len(rows)} שורות -> {os.path.relpath(out_path, REPO_ROOT)}")
+            except Blocked as e:
+                log(f"  {e} - עוצר את כל הריצה")
+                blocked = True
+                month_done = False
+                break
             except Exception as e:  # noqa: BLE001
                 log(f"  ✗ דוח {rid} ({rep['company']}) נכשל: {e}")
                 stats["errors"] += 1
@@ -286,7 +306,9 @@ def main():
             scanned_months.add(ym)
             stats["months_scanned"] += 1
         else:
-            log(f"  חודש {ym} לא הושלם (תקציב זמן) - יושלם בריצה הבאה")
+            log(f"  חודש {ym} לא הושלם (תקציב זמן/חסימה) - יושלם בריצה הבאה")
+            break
+        if blocked:
             break
 
     save_json(FETCHED_IDS_PATH, sorted(fetched_ids))
@@ -294,9 +316,11 @@ def main():
 
     remaining = len(all_months) - len(scanned_months)
     log(f"\n=== סיכום ריצה ===")
-    log(json.dumps({**stats, "months_remaining": remaining,
+    log(json.dumps({**stats, "months_remaining": remaining, "blocked": blocked,
                      "total_fetched_ids": len(fetched_ids)}, ensure_ascii=False, indent=2))
-    if remaining > 0:
+    if blocked:
+        log("\n⚠ מאיה חסמה (403) - עדיף לחכות כמה דקות/שעה לפני ריצה חוזרת, ואולי להגדיל SLEEP_BETWEEN_CALLS עוד")
+    elif remaining > 0:
         log(f"\n⚠ נותרו {remaining} חודשים לסריקה - יש להריץ את ה-workflow שוב כדי להמשיך")
     else:
         log("\n✓ כל טווח ההיסטוריה נסרק")

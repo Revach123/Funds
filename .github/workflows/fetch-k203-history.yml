@@ -6,6 +6,10 @@ on:
         description: "Max seconds to spend fetching before stopping and committing (default 1080 = 18min)"
         required: false
         default: "1080"
+      history_start:
+        description: "Override HISTORY_START (YYYY-MM-DD) for testing a narrower/more recent range"
+        required: false
+        default: ""
 permissions:
   contents: write
 concurrency:
@@ -24,12 +28,14 @@ jobs:
       - name: Fetch batch of ק203 reports
         env:
           RUN_BUDGET_SECONDS: ${{ inputs.budget_seconds }}
+          HISTORY_START: ${{ inputs.history_start }}
         run: python scripts/fetch_k203_history.py
       - name: Commit results
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add reports state
+          git add state
+          [ -d reports ] && git add reports || echo "no reports fetched this run"
           git diff --staged --quiet && echo "no changes" && exit 0
           git commit -m "k203: fetch batch $(date -u +%Y-%m-%dT%H:%M:%SZ)"
           for i in 1 2 3 4 5; do
