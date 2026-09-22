@@ -1,0 +1,23 @@
+name: discover-etf-vs-mutual
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests
+      - run: python scripts/discover_etf_vs_mutual.py
+      - name: Commit results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add discover_etf_vs_mutual_results.json
+          git diff --staged --quiet && echo "no changes" && exit 0
+          git commit -m "discover: etf vs mutual endpoint comparison"
+          git push

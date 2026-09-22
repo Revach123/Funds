@@ -27,6 +27,7 @@ except ImportError:
 
 BASE = "https://maya.tase.co.il"
 LIST_URL = BASE + "/api/v1/reports/mutual-funds"
+ETF_LIST_URL = BASE + "/api/v1/reports/etfs"
 META_URL = BASE + "/api/v1/reports/{id}"
 
 _MARKS = "‏‎‪‫‬‭‮ "
