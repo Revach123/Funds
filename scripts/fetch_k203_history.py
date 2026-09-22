@@ -211,18 +211,29 @@ def month_windows(start, end):
     return out
 
 
+def _today_cap(now=None):
+    """כמו _date_bounds ב-scripts/funds_info/exposure.py (Revach, כבר מוכח
+    עובד): 'today' לפי UTC לא תמיד בטוח כ-toDate - לפני השעה 8 UTC (לפני
+    שהיום הישראלי "התעדכן" אצל מאיה) עדיף today-1. ניסיון קודם להגביל
+    ל-"מחר" עדיין נכשל (400 גם על 23/9 כש-"היום" היה 22/9) - מאיה כנראה
+    דוחה כל toDate שעדיין לא "נסגר" מבחינתה, לא רק תאריכים עתידיים ממש."""
+    now = now or datetime.now(timezone.utc)
+    today = now.date()
+    return today - timedelta(days=1) if now.hour < 8 else today
+
+
 def month_bounds(ym):
     """מחזיר (fromDate, toDate) בפורמט שמאיה מצפה לו. לחודש הנוכחי, ה'סוף'
     התיאורטי (1 לחודש הבא) הוא תאריך עתידי - מאיה מחזירה 400 Bad Request
     על טווח כזה (נראה בפועל: חודש 2026-09 נכשל, כי 1/10/2026 עתידי ביחס
-    ל-22/9/2026). מגבילים את to ל-מחר לכל היותר."""
+    ל-22/9/2026)."""
     y, m = (int(x) for x in ym.split("-"))
     frm = date(y, m, 1)
     to = date(y + 1, 1, 1) if m == 12 else date(y, m + 1, 1)
-    tomorrow = datetime.now(timezone.utc).date() + timedelta(days=1)
-    if to > tomorrow:
-        to = tomorrow
-    z_frm, z_to = "T00:00:00.000Z", "T00:00:00.000Z"
+    cap = _today_cap()
+    if to > cap:
+        to = cap
+    z_frm, z_to = "T00:00:00.000Z", "T22:00:00.000Z"
     return frm.isoformat() + z_frm, to.isoformat() + z_to
 
 
