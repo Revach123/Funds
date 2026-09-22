@@ -93,17 +93,19 @@ HEB_MONTHS = {"ינואר": 1, "פברואר": 2, "מרץ": 3, "מרס": 3, "א�
               "יולי": 7, "אוגוסט": 8, "ספטמבר": 9, "אוקטובר": 10, "נובמבר": 11, "דצמבר": 12}
 
 
-def parse_period(title, fallback_ym):
-    """'דוח חודשי-אפריל 2026' -> '2026-04' (התקופה שהדוח *מדווח עליה*,
-    לא החודש שבו הוא נמצא/פורסם - דוח יכול להתפרסם/להיות מתוקן חודשים
-    אחרי התקופה עצמה - זה מה ש-fallback_ym (חודש הסריקה) היה מייצג בטעות)."""
+def parse_period_from_title(title, fallback_ym):
+    """'דוח חודשי-אפריל 2026' -> '2026-04'. לא אמין לגמרי כמקור יחיד: דוחות
+    מתקנים מוסיפים סיומת ("דוח חודשי-דצמבר 2025 - תיקון דוח") עם עוד '-',
+    ואם מחפשים רק במקטע האחרון אחרי split('-') מקבלים "תיקון דוח" (בלי
+    חודש/שנה) ונופלים בטעות ל-fallback_ym (חודש הסריקה, לא התקופה האמיתית) -
+    בדיוק הבאג שגרם לדוח המתקן של אלטשולר-שחם להיות מסווג ל-2026-02 במקום
+    2025-12 בפועל. לכן מחפשים חודש עברי + שנה בכל הכותרת, לא רק במקטע
+    האחרון. עדיין - derive_period_from_rows (עמודת "תאריך דוח" בתוך הדוח
+    עצמו) הוא המקור הסמכותי בפועל; זה fallback לשעת חירום בלבד."""
     t = _clean(title)
-    parts = t.split("-")
-    if len(parts) < 2:
-        return fallback_ym
-    tail = _clean(parts[-1])
+    tokens = t.replace("-", " ").split()
     year = mon = None
-    for tok in tail.split():
+    for tok in tokens:
         if tok.isdigit() and len(tok) == 4:
             year = int(tok)
         elif tok in HEB_MONTHS:
@@ -111,6 +113,27 @@ def parse_period(title, fallback_ym):
     if year and mon:
         return f"{year:04d}-{mon:02d}"
     return fallback_ym
+
+
+def derive_period_from_rows(columns, rows, fallback_ym):
+    """המקור הסמכותי לתקופה: עמודת "תאריך דוח" (DDMMYYYY) בתוך הדוח עצמו -
+    לא כפוף לטעויות כתיבה/פורמט בכותרת הדוח במאיה. לוקחים את הערך השכיח
+    ביותר (יש כמה תאריכי מסחר שונים בתוך אותו דוח חודשי, כולם אמורים
+    להיות מאותו חודש קלנדרי)."""
+    try:
+        idx = columns.index("תאריך דוח")
+    except ValueError:
+        return fallback_ym
+    from collections import Counter
+    vals = [r[idx] for r in rows if idx < len(r) and r[idx] and r[idx].isdigit() and len(r[idx]) == 8]
+    if not vals:
+        return fallback_ym
+    most_common = Counter(vals).most_common(1)[0][0]
+    dd, mm, yyyy = most_common[0:2], most_common[2:4], most_common[4:8]
+    try:
+        return f"{int(yyyy):04d}-{int(mm):02d}"
+    except ValueError:
+        return fallback_ym
 
 RUN_BUDGET_SECONDS = int(os.environ.get("RUN_BUDGET_SECONDS") or 3 * 60 * 60)   # 3h ברירת מחדל - ריפו ציבורי, דקות Actions חינם; משאיר מרווח לפני timeout-minutes של ה-job
 SLEEP_BETWEEN_CALLS = 0.7   # מאיה חוסמת (403) אחרי סדרה מהירה מדי של בקשות
@@ -405,7 +428,11 @@ def main():
                     continue
                 columns, rows = fetch_txt1_rows(session, txt1["url"])
                 company = rep["company"]
-                period_ym = parse_period(rep["title"], ym)
+                title_period = parse_period_from_title(rep["title"], ym)
+                period_ym = derive_period_from_rows(columns, rows, title_period)
+                if period_ym != title_period:
+                    log(f"  ⚠ דוח {rid}: כותרת מרמזת על {title_period} אבל עמודת תאריך דוח "
+                        f"מראה {period_ym} - נלקח הנתון מהעמודה (סמכותי)")
                 out_path = os.path.join(OUT_DIR, safe_name(company),
                                          f"{rid}_{period_ym.replace('-', '')}.json")
                 save_json(out_path, {
